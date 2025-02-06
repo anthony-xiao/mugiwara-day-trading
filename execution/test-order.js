@@ -1,11 +1,20 @@
 // execution/test-order.js
 import { executeOrder } from './alpaca-router.js';
 
-const testSignal = {
-  symbol: 'AAPL',
-  direction: 'buy',
-  price: 150.25,
-  atr: 1.2
-};
+async function testOrder() {
+  const testSignal = {
+    symbol: 'AAPL',
+    direction: 'buy',
+    price: '150.25', // Must be string
+    quantity: '10' // Must be string
+  };
 
-executeOrder(testSignal).catch(console.error);
+  try {
+    const result = await executeOrder(testSignal);
+    console.log('Order Result:', result);
+  } catch (error) {
+    console.error('Test Failed:', error.message);
+  }
+}
+
+testOrder();

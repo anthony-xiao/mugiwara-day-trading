@@ -19,28 +19,25 @@ function checkOrderValidity(order) {
          ['buy', 'sell'].includes(order.side);
 }
 
+// Correct method usage for v3
 export async function executeOrder(signal) {
-  const order = {
-    symbol: signal.symbol,
-    qty: calculatePositionSize(signal),
-    side: signal.direction,
-    type: 'limit',
-    limit_price: signal.price * 0.9995,
-    time_in_force: 'ioc',
-    client_order_id: `HFT_${Date.now()}`
-  };
+  try {
+    const order = {
+      symbol: signal.symbol,
+      qty: signal.quantity.toString(), // Must be string in v3
+      side: signal.direction,
+      type: 'limit',
+      limit_price: signal.price.toString(), // Must be string
+      time_in_force: 'day',
+      client_order_id: `HFT_${Date.now()}`
+    };
 
-  if (await checkOrderValidity(order)) {
-    try {
-      const result = await alpaca.placeOrder(order);
-      console.log(`Order executed: ${result.id}`);
-      return result;
-    } catch (error) {
-      console.error('Order failed:', error.message);
-      throw error;
-    }
+    const response = await alpaca.createOrder(order);
+    return response;
+  } catch (error) {
+    console.error('Order Error:', error.response?.data || error.message);
+    throw error;
   }
-  return null;
 }
 
 function calculatePositionSize(signal) {
