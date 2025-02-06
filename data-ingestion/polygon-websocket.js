@@ -15,7 +15,7 @@ const connectPolygon = () => {
   ws.onopen = () => {
     console.log('✅ WebSocket Connected');
     ws.send(JSON.stringify({"action":"auth","params":process.env.POLYGON_API_KEY}));
-    ws.send(JSON.stringify({"action":"subscribe","params":"T.TSLA,Q.TSLA,A.TSLA"}));
+    ws.send(JSON.stringify({"action":"subscribe","params":"T.*,Q.*,A.*"}));
   };
 
   ws.onclose = (event) => {

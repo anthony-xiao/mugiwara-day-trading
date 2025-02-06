@@ -1,10 +1,12 @@
-# ml-core/test-model-training.py
-from model_training import create_hybrid_model
+# Correct import statement
+from model_training import create_hybrid_model  # Changed from model-training
 import numpy as np
 
-X_train = np.random.randn(1000, 60, 10)  # 60 timesteps, 10 features
-model = create_hybrid_model((60, 10))
-model.compile(optimizer='adam', loss='sparse_categorical_crossentropy')
-print(model.summary())
+def test_model_creation():
+    X_train = np.random.randn(1000, 60, 10)
+    model = create_hybrid_model((60, 10))
+    assert model.input_shape == (None, 60, 10), "Input shape mismatch"
+    print("✓ Model creation test passed!")
 
-# Expected output: Model architecture with LSTM+Transformer layers
+if __name__ == "__main__":
+    test_model_creation()
