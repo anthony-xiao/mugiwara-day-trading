@@ -1,5 +1,5 @@
 // feature-engine/test-features.mjs
-import { calculateVWAPDeviation } from './realtime-features.mjs';
+import { calculateVWAPDeviation } from './realtime-features.js';
 
 const testData = {
   lastPrice: 150.25,

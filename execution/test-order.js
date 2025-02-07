@@ -3,7 +3,7 @@ import { executeOrder } from './alpaca-router.js';
 
 async function testOrder() {
   const testSignal = {
-    symbol: 'AAPL',
+    symbol: 'TSLA',
     direction: 'buy',
     price: '150.25', // Must be string
     quantity: '10' // Must be string

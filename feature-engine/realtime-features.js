@@ -26,6 +26,6 @@ redis.subscribe('market-data:processed', (err) => {
   });
 });
 
-function calculateVWAPDeviation(data) {
+export async function calculateVWAPDeviation(data) {
   return (data.lastPrice - data.vwap) / (data.atr5 || 1);
 }
