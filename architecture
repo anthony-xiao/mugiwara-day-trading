@@ -1,0 +1,45 @@
+/project-root
+├── /data-ingestion
+│   ├── polygon-websocket.js
+│   ├── historical-data-fetcher.py
+│   └── rolling-window-manager.js
+├── /feature-engine
+│   ├── realtime-features.js
+│   └── options-flow-processor.py
+├── /ml-core
+│   ├── model-training.py
+│   ├── hybrid-model.tfjs
+│   └── shap-analyser.py
+├── /execution
+│   ├── alpaca-router.js
+│   └── anti-gaming.js
+├── /risk-management
+│   ├── circuit-breakers.js
+│   └── regime-detector.py
+├── /shared
+│   ├── redis-client.js
+│   └── config.js
+└── /backtesting
+    ├── walk-forward.py
+    └── performance-analyser.py
+
+
+
+    +-------------------+     WebSocket      +-------------------+
+|  Polygon.io       |<------------------>|  Data Ingestion    |
+|  Real-time Data   |       REST         |  Service (Node.js) |
++-------------------+                    +----------+----------+
+                                           | Redis Pub/Sub
++-------------------+                    +----------+----------+
+|  ML Backtesting   |                    | Feature Engineering |
+|  (Python)         |<---+               | Service (Node.js)   |
++-------------------+    |               +----------+----------+
+                         |                   WebSocket |
+                    +----v----+                        |
+                    | PostgreSQL |<--------------------+
+                    +----+----+
+                         |
++-------------------+    |              +-------------------+
+|  Execution Engine |<---+------------->| Risk Management   |
+|  (Node.js)        |    ZeroMQ         | Service (Node.js) |
++-------------------+                   +-------------------+
