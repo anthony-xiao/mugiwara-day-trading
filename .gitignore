@@ -71,6 +71,7 @@
 *.xcsettings
 *.xcconfig
 *.xcplugindata
+*.parquet
 
 # Node.js
 node_modules/

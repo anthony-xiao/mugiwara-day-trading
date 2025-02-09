@@ -1,5 +1,5 @@
 """
-Polygon.io Historical Data Fetcher (Corrected Endpoints)
+Polygon.io Historical Data Fetcher
 
 Purpose:
 - Collects 20+ years of multi-resolution market data for model training
@@ -8,18 +8,26 @@ Purpose:
 - Stores data in efficient Parquet format
 
 Data Collected:
-1. Minute/Second Aggregates (OHLCV + VWAP) - v2
-2. Trades/Quotes Tick Data - v3
-3. Corporate Actions (Splits/Dividends) - v3
-4. Fundamental Data - vX
-5. Reference Data - v3
-6. Technical Indicators - v1
+1. Minute/Second Aggregates (OHLCV + VWAP)
+2. Trades/Quotes Tick Data
+3. Corporate Actions (Splits/Dividends)
+4. Fundamental Data
+5. Reference Data
+6. Technical Indicators
+"""
+"""
+Polygon.io Historical Data Fetcher (Corrected)
+"""
+"""
+Polygon.io Historical Data Fetcher
+- Aggregates (OHLCV + VWAP)
+- Trades and Quotes
+- Corporate Actions (Splits and Dividends)
 """
 
 import os
 import requests
 import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
 import time
 from multiprocessing.pool import ThreadPool
@@ -34,52 +42,53 @@ logging.basicConfig(
     handlers=[logging.FileHandler('data_ingestion.log'), logging.StreamHandler()]
 )
 
+# Constants
 POLYGON_API_KEY = os.getenv('POLYGON_KEY')
 BASE_URL = "https://api.polygon.io"
-MAX_THREADS = 8  # Optimal for Polygon's rate limits
-YEAR_CHUNKS = 5  # Years per request for very historical data
+MAX_THREADS = 8
+TRADING_DAYS = set()  # Populated during initialization
 
-def fetch_paginated_data(url: str, params: Dict) -> List[Dict]:
-    """Handle Polygon's pagination with exponential backoff"""
+def is_trading_day(date: datetime) -> bool:
+    """Check if a date is a trading day."""
+    return date.strftime('%Y-%m-%d') in TRADING_DAYS
+
+def fetch_paginated_data(url: str, params: Dict = None) -> List[Dict]:
+    """Handle Polygon pagination with proper URL handling."""
     results = []
-    next_url = None
+    next_url = url
     retries = 0
     max_retries = 5
     
-    while True:
+    while next_url:
         try:
-            if next_url:
-                response = requests.get(
-                    f"{BASE_URL}{next_url}",
-                    params={"apiKey": POLYGON_API_KEY},
-                    timeout=30
-                )
+            # Add API key directly to URL for next_url case
+            if '?' in next_url:
+                next_url += f"&apiKey={POLYGON_API_KEY}"
             else:
-                response = requests.get(
-                    url,
-                    params={**params, "apiKey": POLYGON_API_KEY},
-                    timeout=30
-                )
-            
+                next_url += f"?apiKey={POLYGON_API_KEY}"
+                
+            response = requests.get(next_url, timeout=30)
             response.raise_for_status()
             data = response.json()
             
-            if "results" in data:
-                results.extend(data["results"])
-            elif "trades" in data:  # Handle trades/quotes response format
-                results.extend(data["trades"])
-            elif "quotes" in data:
-                results.extend(data["quotes"])
-                
-            if "next_url" in data:
-                next_url = data["next_url"]
-            else:
+            if response.status_code == 204:  # No content
                 break
                 
+            if "results" in data:
+                results.extend(data["results"])
+            elif "ticks" in data:  # Trades/quotes
+                results.extend(data["ticks"])
+            elif "tickers" in data:  # For reference data
+                results.extend(data["tickers"])
+            
+            next_url = data.get("next_url")
             retries = 0
-            time.sleep(0.1)  # Respect rate limits
+            time.sleep(0.12)  # 8 requests/sec limit
             
         except requests.exceptions.RequestException as e:
+            if response.status_code in [404, 422]:  # Don't retry client errors
+                break
+                
             retries += 1
             if retries > max_retries:
                 logging.error(f"Failed after {max_retries} retries: {e}")
@@ -97,8 +106,8 @@ def fetch_aggregates(
     multiplier: int = 1,
     timespan: str = "minute"
 ) -> pd.DataFrame:
-    """Fetch OHLCV + VWAP data with optimal time chunking (v2 API)"""
-    url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start:%Y-%m-%d}/{end:%Y-%m-%d}"
+    """Fetch OHLCV + VWAP data."""
+    url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start.date().isoformat()}/{end.date().isoformat()}"
     params = {
         "adjusted": "true",
         "sort": "asc",
@@ -112,7 +121,7 @@ def fetch_aggregates(
         
     df = pd.DataFrame(data)
     df["t"] = pd.to_datetime(df["t"], unit="ms", utc=True)
-    df = df.rename(columns={
+    return df.rename(columns={
         "t": "timestamp",
         "o": "open",
         "h": "high",
@@ -121,124 +130,197 @@ def fetch_aggregates(
         "v": "volume",
         "vw": "vwap"
     }).set_index("timestamp")
-    
-    return df
 
-def fetch_corporate_actions(ticker: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Get splits (v3) and dividends (v3) separately"""
-    # Fetch splits
-    splits_url = f"{BASE_URL}/v3/reference/splits"
-    splits_params = {"ticker": ticker, "limit": 1000}
-    splits = fetch_paginated_data(splits_url, splits_params)
-    
-    # Fetch dividends
-    div_url = f"{BASE_URL}/v3/reference/dividends"
-    div_params = {"ticker": ticker, "limit": 1000}
-    dividends = fetch_paginated_data(div_url, div_params)
-    
-    return (
-        pd.DataFrame(splits),
-        pd.DataFrame(dividends)
-    )
+def fetch_splits(ticker: str) -> pd.DataFrame:
+    """Fetch stock splits."""
+    url = f"{BASE_URL}/v3/reference/splits"
+    params = {"ticker": ticker, "limit": 1000}
+    data = fetch_paginated_data(url, params)
+    return pd.DataFrame(data)[["execution_date", "split_from", "split_to"]]
+
+def fetch_dividends(ticker: str) -> pd.DataFrame:
+    """Fetch dividends."""
+    url = f"{BASE_URL}/v3/reference/dividends"
+    params = {"ticker": ticker, "limit": 1000}
+    data = fetch_paginated_data(url, params)
+    return pd.DataFrame(data)[["ex_dividend_date", "cash_amount", "declaration_date"]]
 
 def fetch_trades(ticker: str, date: str) -> pd.DataFrame:
-    """Get tick-level trade data (v3 API)"""
+    """Fetch tick-level trades."""
+    if not is_trading_day(datetime.strptime(date, "%Y-%m-%d")):
+        return pd.DataFrame()
+        
     url = f"{BASE_URL}/v3/trades/{ticker}/{date}"
-    data = fetch_paginated_data(url, {})
+    data = fetch_paginated_data(url)
     
     if not data:
         return pd.DataFrame()
         
     df = pd.DataFrame(data)
-    df["timestamp"] = pd.to_datetime(df["participant_timestamp"], utc=True)
+    df["timestamp"] = pd.to_datetime(df["sip_timestamp"], utc=True)
     return df[["timestamp", "price", "size", "conditions"]]
 
 def fetch_quotes(ticker: str, date: str) -> pd.DataFrame:
-    """Get NBBO quotes (v3 API)"""
+    """Fetch NBBO quotes."""
+    if not is_trading_day(datetime.strptime(date, "%Y-%m-%d")):
+        return pd.DataFrame()
+        
     url = f"{BASE_URL}/v3/quotes/{ticker}/{date}"
-    data = fetch_paginated_data(url, {})
+    data = fetch_paginated_data(url)
     
     if not data:
         return pd.DataFrame()
         
     df = pd.DataFrame(data)
-    df["timestamp"] = pd.to_datetime(df["participant_timestamp"], utc=True)
-    return df[["timestamp", "bid_price", "bid_size", "ask_price", "ask_size"]]
+    df["timestamp"] = pd.to_datetime(df["sip_timestamp"], utc=True)
+    return df[[
+        "timestamp", "bid_price", "bid_size", 
+        "ask_price", "ask_size", "indicators"
+    ]]
 
-def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, pd.DataFrame]:
-    """Orchestrate full data collection for a ticker"""
+def initialize_trading_days():
+    """Initialize trading calendar."""
+    global TRADING_DAYS
+    TRADING_DAYS = set()
+    
+    # Fetch market holidays
+    url = f"{BASE_URL}/v1/marketstatus/upcoming"
+    try:
+        response = requests.get(url, params={"apiKey": POLYGON_API_KEY})
+        response.raise_for_status()
+        market_status = response.json()
+        
+        # Get all trading days between 2000-01-01 and today
+        start_date = "2000-01-01"
+        end_date = datetime.now().strftime("%Y-%m-%d")
+        
+        # Fetch all market holidays
+        holidays_url = f"{BASE_URL}/v1/marketstatus/upcoming"
+        holidays_response = requests.get(holidays_url, params={
+            "apiKey": POLYGON_API_KEY,
+            "from": start_date,
+            "to": end_date
+        })
+        holidays_response.raise_for_status()
+        holidays_data = holidays_response.json()
+        
+        # Create a set of all dates between start and end
+        all_dates = pd.date_range(start_date, end_date, freq='B')  # Business days
+        
+        # Filter out holidays
+        holidays = {datetime.strptime(d["date"], "%Y-%m-%d").date() 
+                   for d in holidays_data if d["status"] == "closed"}
+        
+        # Create trading days set
+        TRADING_DAYS = {
+            date.date().isoformat() 
+            for date in all_dates 
+            if date.date() not in holidays
+        }
+        
+        logging.info(f"Initialized {len(TRADING_DAYS)} trading days from {start_date} to {end_date}")
+        
+    except Exception as e:
+        logging.error(f"Failed to initialize trading calendar: {str(e)}")
+        # Fallback to weekdays if API fails
+        start_date = datetime(2000, 1, 1)
+        end_date = datetime.now()
+        all_dates = pd.date_range(start_date, end_date, freq='B')
+        TRADING_DAYS = {date.date().isoformat() for date in all_dates}
+        logging.warning(f"Using fallback calendar with {len(TRADING_DAYS)} weekdays")
+
+def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str]:
+    """Fetch all data for a ticker."""
     os.makedirs(f"data/historical/{ticker}", exist_ok=True)
     results = {}
     
-    # 1. Fetch aggregates (multiple resolutions)
-    for timespan, multiplier in [("second", 1), ("minute", 1), ("day", 1)]:
-        df = fetch_aggregates(ticker, 
-                            datetime.strptime(start_date, "%Y-%m-%d"), 
-                            datetime.strptime(end_date, "%Y-%m-%d"), 
-                            multiplier, 
-                            timespan)
-        if not df.empty:
-            path = f"data/historical/{ticker}/aggregates_{timespan}.parquet"
-            df.to_parquet(path)
-            results[f"aggregates_{timespan}"] = path
-    
-    # 2. Get corporate actions
-    splits, dividends = fetch_corporate_actions(ticker)
-    if not splits.empty:
-        splits_path = f"data/historical/{ticker}/splits.parquet"
-        splits.to_parquet(splits_path)
-        results["splits"] = splits_path
-    if not dividends.empty:
-        div_path = f"data/historical/{ticker}/dividends.parquet"
-        dividends.to_parquet(div_path)
-        results["dividends"] = div_path
-    
-    # 3. Fetch tick data (parallelize by date)
-    dates = pd.date_range(start_date, end_date, freq="D")
-    
-    def process_date(date):
-        date_str = date.strftime("%Y-%m-%d")
-        trades = fetch_trades(ticker, date_str)
-        quotes = fetch_quotes(ticker, date_str)
-        return date_str, trades, quotes
+    try:
+        # Aggregates
+        for res in [("second", 1), ("minute", 1), ("day", 1)]:
+            df = fetch_aggregates(
+                ticker,
+                datetime.strptime(start_date, "%Y-%m-%d"),
+                datetime.strptime(end_date, "%Y-%m-%d"),
+                res[1], res[0]
+            )
+            if not df.empty:
+                path = f"data/historical/{ticker}/aggregates_{res[0]}.parquet"
+                df.to_parquet(path)
+                results[f"aggregates_{res[0]}"] = path
 
-    with ThreadPool(MAX_THREADS) as pool:
-        for date_str, trades, quotes in pool.imap(process_date, dates):
-            if not trades.empty:
-                trades_path = f"data/historical/{ticker}/trades_{date_str}.parquet"
-                trades.to_parquet(trades_path)
-                results.setdefault("trades", []).append(trades_path)
-            if not quotes.empty:
-                quotes_path = f"data/historical/{ticker}/quotes_{date_str}.parquet"
-                quotes.to_parquet(quotes_path)
-                results.setdefault("quotes", []).append(quotes_path)
-    
+        # Corporate Actions (Splits and Dividends)
+        splits = fetch_splits(ticker)
+        dividends = fetch_dividends(ticker)
+        if not splits.empty or not dividends.empty:
+            corp_actions = pd.concat([splits, dividends], axis=1)
+            path = f"data/historical/{ticker}/corporate_actions.parquet"
+            corp_actions.to_parquet(path)
+            results["corporate_actions"] = path
+
+        # Tick Data
+        dates = pd.date_range(start_date, end_date, freq="D")
+        
+        def process_date(date: datetime) -> Tuple[str, pd.DataFrame, pd.DataFrame]:
+            date_str = date.strftime("%Y-%m-%d")
+            if not is_trading_day(date):
+                return (date_str, pd.DataFrame(), pd.DataFrame())
+            return (
+                date_str,
+                fetch_trades(ticker, date_str),
+                fetch_quotes(ticker, date_str)
+            )
+
+        with ThreadPool(MAX_THREADS) as pool:
+            for date_str, trades, quotes in pool.imap(process_date, dates):
+                if not trades.empty:
+                    path = f"data/historical/{ticker}/trades_{date_str}.parquet"
+                    trades.to_parquet(path)
+                    results.setdefault("trades", []).append(path)
+                if not quotes.empty:
+                    path = f"data/historical/{ticker}/quotes_{date_str}.parquet"
+                    quotes.to_parquet(path)
+                    results.setdefault("quotes", []).append(path)
+                    
+    except Exception as e:
+        logging.error(f"Critical error processing {ticker}: {str(e)}")
+        
     return results
 
 if __name__ == "__main__":
     import argparse
     
     parser = argparse.ArgumentParser(description="Fetch Polygon.io historical data")
-    parser.add_argument("tickers", nargs="+", help="Stock tickers to fetch")
-    parser.add_argument("--start", type=str, required=True, help="Start date YYYY-MM-DD")
-    parser.add_argument("--end", type=str, default=datetime.now().strftime("%Y-%m-%d"), 
-                       help="End date YYYY-MM-DD")
-    parser.add_argument("--threads", type=int, default=MAX_THREADS, 
-                       help="Max parallel threads")
+    parser.add_argument("--init-only", action="store_true", 
+                       help="Initialize trading calendar only")
+    parser.add_argument("tickers", nargs="*", help="Stock tickers")
+    parser.add_argument("--start", help="Start date YYYY-MM-DD")
+    parser.add_argument("--end", default=datetime.now().strftime("%Y-%m-%d"))
+    parser.add_argument("--threads", type=int, default=MAX_THREADS)
     
     args = parser.parse_args()
-    MAX_THREADS = args.threads
     
-    def process_ticker(ticker):
-        logging.info(f"Processing {ticker}")
+    if args.init_only:
+        initialize_trading_days()
+        logging.info(f"Initialized {len(TRADING_DAYS)} trading days")
+        exit(0)
+        
+    if not args.tickers or not args.start:
+        parser.error("tickers and --start required when not using --init-only")
+    
+    # Initialize trading calendar if not already done
+    if not TRADING_DAYS:
+        initialize_trading_days()
+    
+    def process_ticker(ticker: str):
+        logging.info(f"Starting {ticker}")
         try:
             return fetch_all_data(ticker, args.start, args.end)
         except Exception as e:
             logging.error(f"Failed {ticker}: {str(e)}")
             return None
 
-    with ThreadPool(min(MAX_THREADS, len(args.tickers))) as pool:
+    with ThreadPool(min(args.threads, len(args.tickers))) as pool:
         results = pool.map(process_ticker, args.tickers)
     
-    logging.info("Data collection complete")
-    logging.info(f"Results: {results}")
+    success_count = sum(1 for r in results if r)
+    logging.info(f"Completed with {success_count}/{len(args.tickers)} successful tickers")
