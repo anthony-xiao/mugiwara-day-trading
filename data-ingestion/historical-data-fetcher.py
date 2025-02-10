@@ -26,6 +26,7 @@ Polygon.io Historical Data Fetcher
 """
 
 import os
+from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
@@ -53,51 +54,78 @@ def is_trading_day(date: datetime) -> bool:
     return date.strftime('%Y-%m-%d') in TRADING_DAYS
 
 def fetch_paginated_data(url: str, params: Dict = None) -> List[Dict]:
-    """Handle Polygon pagination with proper URL handling."""
+    """Handle Polygon pagination with loop prevention"""
     results = []
     next_url = url
     retries = 0
-    max_retries = 5
+    max_retries = 3
+    timeout = 10
+    max_pages = 20  # Safety net to prevent infinite loops
+    pages_fetched = 0
+    seen_cursors = set()
+    original_params = params.copy() if params else {}
+
+    logging.info(f"Starting pagination for {next_url}")
     
-    while next_url:
+    while next_url and pages_fetched < max_pages:
         try:
-            # Add API key directly to URL for next_url case
-            if '?' in next_url:
-                next_url += f"&apiKey={POLYGON_API_KEY}"
-            else:
-                next_url += f"?apiKey={POLYGON_API_KEY}"
-                
-            response = requests.get(next_url, timeout=30)
+            parsed = urlparse(next_url)
+            query = parse_qs(parsed.query)
+
+            # Remove potential conflict parameters
+            for key in ["timestamp.gte", "timestamp.lte", "sort", "order"]:
+                if key in query:
+                    del query[key]
+            
+            # Merge with original params
+            for key, value in original_params.items():
+                if isinstance(value, list):
+                    query[key] = value
+                else:
+                    query[key] = [str(value)]
+            
+            # Extract cursor for loop detection
+            cursor = query.get('cursor', [None])[0]
+            if cursor in seen_cursors:
+                logging.warning(f"Detected duplicate cursor {cursor}, stopping pagination")
+                break
+            seen_cursors.add(cursor)
+            
+            # Clean and fetch
+            query['apiKey'] = POLYGON_API_KEY
+            next_url = urlunparse(parsed._replace(query=urlencode(query, doseq=True)))
+            
+            logging.info(f"Fetching page {pages_fetched + 1}")
+            response = requests.get(next_url, timeout=timeout)
             response.raise_for_status()
             data = response.json()
             
-            if response.status_code == 204:  # No content
+            # Check for empty results
+            records = data.get('results', data.get('ticks', data.get('tickers', [])))
+            if not records:
+                logging.info("No more records found")
                 break
                 
-            if "results" in data:
-                results.extend(data["results"])
-            elif "ticks" in data:  # Trades/quotes
-                results.extend(data["ticks"])
-            elif "tickers" in data:  # For reference data
-                results.extend(data["tickers"])
+            results.extend(records)
+            pages_fetched += 1
+            logging.info(f"Received {len(records)} records (total: {len(results)})")
             
-            next_url = data.get("next_url")
-            retries = 0
-            time.sleep(0.12)  # 8 requests/sec limit
-            
-        except requests.exceptions.RequestException as e:
-            if response.status_code in [404, 422]:  # Don't retry client errors
+            # Update next URL
+            next_url = data.get('next_url')
+            time.sleep(0.3)
+
+        except Exception as e:
+            if retries >= max_retries:
+                logging.error(f"Aborting after {max_retries} retries: {str(e)}")
                 break
-                
             retries += 1
-            if retries > max_retries:
-                logging.error(f"Failed after {max_retries} retries: {e}")
-                break
-            sleep_time = 2 ** retries
-            logging.warning(f"Retry {retries} in {sleep_time}s: {e}")
+            sleep_time = min(2 ** retries, 10)
+            logging.warning(f"Retry {retries}/{max_retries} in {sleep_time}s: {str(e)}")
             time.sleep(sleep_time)
-            
+    
+    logging.info(f"Completed pagination after {pages_fetched} pages")
     return results
+
 
 def fetch_aggregates(
     ticker: str,
@@ -107,6 +135,9 @@ def fetch_aggregates(
     timespan: str = "minute"
 ) -> pd.DataFrame:
     """Fetch OHLCV + VWAP data."""
+    start_utc = pd.Timestamp(start).tz_localize('UTC')
+    end_utc = pd.Timestamp(end).tz_localize('UTC')
+
     url = f"{BASE_URL}/v2/aggs/ticker/{ticker}/range/{multiplier}/{timespan}/{start.date().isoformat()}/{end.date().isoformat()}"
     params = {
         "adjusted": "true",
@@ -114,6 +145,7 @@ def fetch_aggregates(
         "limit": 50000
     }
     
+    logging.info(f"Fetching {timespan} aggregates from {start_utc} to {end_utc}")
     data = fetch_paginated_data(url, params)
     
     if not data:
@@ -121,7 +153,9 @@ def fetch_aggregates(
         
     df = pd.DataFrame(data)
     df["t"] = pd.to_datetime(df["t"], unit="ms", utc=True)
-    return df.rename(columns={
+    logging.info(f"Fetched {len(df)} {timespan} aggregates for {ticker}")
+
+    df = df.rename(columns={
         "t": "timestamp",
         "o": "open",
         "h": "high",
@@ -130,53 +164,164 @@ def fetch_aggregates(
         "v": "volume",
         "vw": "vwap"
     }).set_index("timestamp")
-
-def fetch_splits(ticker: str) -> pd.DataFrame:
-    """Fetch stock splits."""
-    url = f"{BASE_URL}/v3/reference/splits"
-    params = {"ticker": ticker, "limit": 1000}
-    data = fetch_paginated_data(url, params)
-    return pd.DataFrame(data)[["execution_date", "split_from", "split_to"]]
-
-def fetch_dividends(ticker: str) -> pd.DataFrame:
-    """Fetch dividends."""
-    url = f"{BASE_URL}/v3/reference/dividends"
-    params = {"ticker": ticker, "limit": 1000}
-    data = fetch_paginated_data(url, params)
-    return pd.DataFrame(data)[["ex_dividend_date", "cash_amount", "declaration_date"]]
-
-def fetch_trades(ticker: str, date: str) -> pd.DataFrame:
-    """Fetch tick-level trades."""
-    if not is_trading_day(datetime.strptime(date, "%Y-%m-%d")):
-        return pd.DataFrame()
-        
-    url = f"{BASE_URL}/v3/trades/{ticker}/{date}"
-    data = fetch_paginated_data(url)
     
-    if not data:
-        return pd.DataFrame()
+    # Filter to exact date range (API sometimes returns extra)
+    mask = (df.index >= start_utc) & (df.index <= end_utc)
+    filtered_df = df[mask]
+    logging.info(f"Filtered to {len(filtered_df)}/{len(df)} records in range")
+    return filtered_df
+
+
+def fetch_splits(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """Fetch splits with optimized parameters"""
+    start_time = time.time()
+    logging.info(f"🔄 Starting splits fetch for {ticker}")
+    
+    try:
+        url = f"{BASE_URL}/v3/reference/splits"
+        params = {
+            "ticker": ticker,
+            "execution_date.gte": start_date,
+            "execution_date.lte": end_date,
+            "limit": 1000
+        }
         
-    df = pd.DataFrame(data)
-    df["timestamp"] = pd.to_datetime(df["sip_timestamp"], utc=True)
-    return df[["timestamp", "price", "size", "conditions"]]
+        data = fetch_paginated_data(url, params)
+        if not data:
+            logging.info(f"✅ No splits found for {ticker}")
+            return pd.DataFrame()
+            
+        df = pd.DataFrame(data)
+        df["execution_date"] = pd.to_datetime(df["execution_date"])
+        logging.info(f"⏱️ Fetched {len(data)} splits in {time.time()-start_time:.2f}s")
+        return df[["execution_date", "split_from", "split_to"]]
+        
+    except Exception as e:
+        logging.error(f"❌ Split fetch failed after {time.time()-start_time:.2f}s: {str(e)}")
+        return pd.DataFrame()
+
+def fetch_dividends(ticker: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """Fetch dividends with proper URL format"""
+    start_time = time.time()
+    logging.info(f"🔄 Starting dividends fetch for {ticker}")
+    
+    try:
+        url = f"{BASE_URL}/v3/reference/dividends"
+        params = {
+            "ticker": ticker,
+            "ex_dividend_date.gte": start_date,
+            "ex_dividend_date.lte": end_date,
+            "limit": 1000
+        }
+        
+        data = fetch_paginated_data(url, params)
+        if not data:
+            return pd.DataFrame()
+        
+        logging.info(f"⏱️ Fetched {len(data)} dividends in {time.time()-start_time:.2f}s")
+        df = pd.DataFrame(data)
+        df["ex_dividend_date"] = pd.to_datetime(df["ex_dividend_date"])
+        return df[["ex_dividend_date", "cash_amount", "declaration_date"]]
+        
+    except Exception as e:
+        logging.error(f"❌ Dividends fetch failed after {time.time()-start_time:.2f}s: {str(e)}")
+        return pd.DataFrame()
+    
+def fetch_trades(ticker: str, date: str) -> pd.DataFrame:
+    """Fetch trades with proper URL format"""
+    start_time = time.time()
+    logging.info(f"🔄 Starting trades fetch for {ticker} on {date}")
+    
+    try:
+        url = f"{BASE_URL}/v3/trades/{ticker}"
+        params = {
+            "timestamp.gte": f"{date}T00:00:00.000Z",
+            "timestamp.lte": f"{date}T23:59:59.999Z",
+            "limit": 1000,
+            "sort": "timestamp",
+            "order": "asc"
+        }
+        
+        data = fetch_paginated_data(url, params)
+        
+        if not data:
+            logging.info(f"✅ No trades found for {ticker} on {date}")
+            return pd.DataFrame()
+        
+        logging.info(f"⏱️ Fetched {len(data)} trades in {time.time()-start_time:.2f}s")
+        df = pd.DataFrame(data)
+        
+        # Validate required columns
+        required_columns = ["sip_timestamp", "price", "size"]
+        for col in required_columns:
+            if col not in df.columns:
+                raise KeyError(f"Missing required trade column: {col}")
+        
+        # Handle optional columns
+        optional_columns = ["conditions"]
+        keep_columns = required_columns.copy()
+        for col in optional_columns:
+            if col in df.columns:
+                keep_columns.append(col)
+        
+        df["timestamp"] = pd.to_datetime(df["sip_timestamp"], utc=True)
+        logging.info(f"⏱️ Fetched {len(df)} trades in {time.time()-start_time:.2f}s")
+        return df[keep_columns]
+        
+    except Exception as e:
+        logging.error(f"❌ Trades fetch failed after {time.time()-start_time:.2f}s: {str(e)}")
+        return pd.DataFrame()
+
 
 def fetch_quotes(ticker: str, date: str) -> pd.DataFrame:
-    """Fetch NBBO quotes."""
-    if not is_trading_day(datetime.strptime(date, "%Y-%m-%d")):
-        return pd.DataFrame()
-        
-    url = f"{BASE_URL}/v3/quotes/{ticker}/{date}"
-    data = fetch_paginated_data(url)
+    """Fetch quotes with proper URL format"""
+    start_time = time.time()
+    logging.info(f"🔄 Starting quotes fetch for {ticker} on {date}")
     
-    if not data:
-        return pd.DataFrame()
+    try:
+        url = f"{BASE_URL}/v3/quotes/{ticker}"
+        params = {
+            "timestamp.gte": f"{date}T00:00:00.000Z",
+            "timestamp.lte": f"{date}T23:59:59.999Z",
+            "limit": 1000,
+            "sort": "timestamp",
+            "order": "asc"
+        }
         
-    df = pd.DataFrame(data)
-    df["timestamp"] = pd.to_datetime(df["sip_timestamp"], utc=True)
-    return df[[
-        "timestamp", "bid_price", "bid_size", 
-        "ask_price", "ask_size", "indicators"
-    ]]
+        data = fetch_paginated_data(url, params)
+        
+        if not data:
+            logging.info(f"✅ No quotes found for {ticker} on {date}")
+            return pd.DataFrame()
+        
+        logging.info(f"⏱️ Fetched {len(data)} quotes in {time.time()-start_time:.2f}s")
+        df = pd.DataFrame(data)
+        
+        # Handle missing columns
+        expected_columns = {
+            "sip_timestamp": True,
+            "bid_price": True,
+            "bid_size": True,
+            "ask_price": True,
+            "ask_size": True,
+            "indicators": False  # Optional
+        }
+        
+        for col, required in expected_columns.items():
+            if col not in df.columns and required:
+                raise KeyError(f"Missing required column: {col}")
+        
+        df["timestamp"] = pd.to_datetime(df["sip_timestamp"], utc=True)
+        keep_columns = [col for col in expected_columns if col in df.columns]
+        
+        logging.info(f"⏱️ Fetched {len(df)} quotes in {time.time()-start_time:.2f}s")
+        return df[keep_columns]
+        
+    except Exception as e:
+        logging.error(f"❌ Quotes fetch failed after {time.time()-start_time:.2f}s: {str(e)}")
+        return pd.DataFrame()
+
+
 
 def initialize_trading_days():
     """Initialize trading calendar."""
@@ -249,20 +394,23 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                 results[f"aggregates_{res[0]}"] = path
 
         # Corporate Actions (Splits and Dividends)
-        splits = fetch_splits(ticker)
-        dividends = fetch_dividends(ticker)
+        splits = fetch_splits(ticker, start_date, end_date)
+        dividends = fetch_dividends(ticker, start_date, end_date)
+        
         if not splits.empty or not dividends.empty:
             corp_actions = pd.concat([splits, dividends], axis=1)
-            path = f"data/historical/{ticker}/corporate_actions.parquet"
+            path = f"data/historical/{ticker}/corporate_actions_{start_date}_to_{end_date}.parquet"
             corp_actions.to_parquet(path)
             results["corporate_actions"] = path
 
         # Tick Data
+        # Trades and Quotes
         dates = pd.date_range(start_date, end_date, freq="D")
         
-        def process_date(date: datetime) -> Tuple[str, pd.DataFrame, pd.DataFrame]:
+        def process_date(date: datetime):
             date_str = date.strftime("%Y-%m-%d")
             if not is_trading_day(date):
+                logging.info(f"Skipping {date_str} (non-trading day)")
                 return (date_str, pd.DataFrame(), pd.DataFrame())
             return (
                 date_str,
@@ -276,10 +424,12 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
                     path = f"data/historical/{ticker}/trades_{date_str}.parquet"
                     trades.to_parquet(path)
                     results.setdefault("trades", []).append(path)
+                    logging.info(f"Saved trades for {ticker} on {date_str} to {path}")
                 if not quotes.empty:
                     path = f"data/historical/{ticker}/quotes_{date_str}.parquet"
                     quotes.to_parquet(path)
                     results.setdefault("quotes", []).append(path)
+                    logging.info(f"Saved quotes for {ticker} on {date_str} to {path}")
                     
     except Exception as e:
         logging.error(f"Critical error processing {ticker}: {str(e)}")

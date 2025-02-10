@@ -43,3 +43,74 @@
 |  Execution Engine |<---+------------->| Risk Management   |
 |  (Node.js)        |    ZeroMQ         | Service (Node.js) |
 +-------------------+                   +-------------------+
+
+
+
+
+**Project Goal:**  
+Develop a high-frequency algorithmic trading system that maximizes intraday profit through machine learning-driven decisions, achieving >65% win rate and >2.0 profit factor (Gross Profit/Gross Loss). The system must process real-time market data, execute trades within 250ms of signal generation, and dynamically adapt to volatility regimes.
+
+**Core Requirements:**  
+1. **Data Pipeline**  
+   - Ingest Polygon.io real-time streams wss://socket.polygon.io/stocks (quotes+trades@ 10ms resolution and +aggregates @ 1s resolution) i also have the plan that includes all features. 
+   - ingest Polygon.io API for historical data used for model
+    - ingest Polygon.io API for back test performance of model. 
+   - Maintain 60-period rolling window of 1-minute bars (O/H/L/C/V/VWAP)  
+
+2. **Feature Engineering**  
+   Required Indicators:  
+   - ATR-5 Normalized Volatility  
+   - Order Book Imbalance (Bid/Ask Depth Ratio)  
+   - RSI-3 Momentum  
+   - VWAP Deviation Score  
+   - Volume Spike Detection (3σ above 20-period MA)  
+   - Tick-Level Order Flow Imbalance  
+
+3. **Model Architecture**  
+   - Hybrid LSTM+Transformer temporal model  
+   - Multi-Task Learning:  
+     - Direction Prediction (Long/Short)  
+     - Volatility Estimation  
+     - Optimal Position Sizing  
+   - SHAP-based Feature Weighting  
+
+4. **Execution System**  
+   - Alpaca API integration with Smart Order Routing  
+   - ATR-Based Stops:  
+     - 1.5x ATR Hard Stop  
+     - 0.8x ATR Trailing Stop  
+   - Anti-Gaming Logic:  
+     - Order Book Spoof Detection  
+     - Trade Rate Limiting  
+
+5. **Risk Management**  
+   - Daily Loss Circuit Breaker (-3%)  
+   - Sector Exposure Balancing  
+   - News Sentiment Filter (30+ Sources)  
+   - Flash Crash Protection (5σ Price Deviation Check)  
+
+**Improvement Targets:**  
+1. Increase Win Rate from 62% → 68%+  
+2. Reduce Max Drawdown from 12% → <8%  
+3. Achieve 250+ Sharpe Ratio (1H Timeframe)  
+4. Support 10+ Simultaneous Symbols  
+
+**Technical Constraints:**  
+- Must use Node.js/TensorFlow.js for real-time execution  
+- Python allowed for anything that is better in python
+- Max 2GB RAM usage during market hours  
+- i use a mac and use npm
+
+**Deliverable Enhancements Request:**  
+1. Enhanced Feature Set incorporating options flow data  
+2. Market Regime Detection Layer  
+3. Adaptive Position Sizing Algorithm  
+4. Backtesting Framework with Walk-Forward Optimization  
+5. Latency Optimization Strategy
+
+make sure to give me the overall archeticture, the folder overviews and every file you give me the path as well so i know exactly where to put the code into. 
+
+also need to make sure all the dependencies and libraries that need installing have steps too.
+
+
+Check back on data date ranges for trades, quotes, splits, dividends.
