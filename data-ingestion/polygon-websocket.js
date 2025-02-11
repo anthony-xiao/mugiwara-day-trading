@@ -48,25 +48,39 @@ const connectPolygon = () => {
             
           case 'Q': // Quote
           console.log('Processing quote:', msg);
-          const obm = new OrderBookManager(msg.sym);
-          await obm.updateOrderBook({
-            bids: msg.bids.slice(0, 5),
-            asks: msg.asks.slice(0, 5)
-          });
           await processQuote(msg);
+          try {
+            const obm = new OrderBookManager(msg.sym);
+            
+            // Polygon's quote format uses bp/bq for best bid, ap/aq for best ask
+            const bids = [[msg.bp, msg.bs]]; // [price, size]
+            const asks = [[msg.ap, msg.as]];
+            
+            await obm.updateOrderBook({
+              bids: bids,
+              asks: asks,
+              timestamp: msg.t
+            });
+          } catch (err) {
+            console.error('Error processing quote:', err);
+          }
 
           case 'T': // Trade
           console.log('Processing trade:', msg);
-          await redis.zadd(`ticks:${msg.sym}`, 
-            msg.t, 
-            JSON.stringify({
-              price: msg.p,
-              size: msg.s,
-              conditions: msg.c,
-              vwap: msg.vw
-            })
-          );
           await processTrade(msg);
+          try {
+            await redis.zadd(`ticks:${msg.sym}`, 
+              msg.t, 
+              JSON.stringify({
+                price: msg.p,
+                size: msg.s,
+                conditions: msg.c,
+                vwap: msg.vw
+              })
+            );
+          } catch (err) {
+            console.error('Error processing trade:', err);
+          }
 
             // Handle other message types if needed
             break;
