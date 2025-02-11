@@ -1,6 +1,6 @@
 // data-ingestion/rolling-window-manager.js
 import Redis from 'ioredis';
-import { technicalIndicators } from 'technicalindicators';
+// import { technicalIndicators } from 'technicalindicators';
 
 const redis = new Redis(process.env.REDIS_URL);
 const WINDOW_SIZE = 60; // 60-minute window

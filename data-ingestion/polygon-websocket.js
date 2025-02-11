@@ -16,6 +16,7 @@ const connectPolygon = () => {
     console.log('✅ WebSocket Connected');
     ws.send(JSON.stringify({"action":"auth","params":process.env.POLYGON_API_KEY}));
     ws.send(JSON.stringify({"action":"subscribe","params":"T.*,Q.*,A.*"}));
+    
   };
 
   ws.onclose = (event) => {
@@ -45,7 +46,12 @@ const connectPolygon = () => {
             
           case 'Q': // Quote
           console.log('Processing quote:', msg);
+          const bookManager = new OrderBookManager(msg.sym);
           await processQuote(msg);
+          await bookManager.updateBook({
+            bids: msg.bids.map(b => ({ price: b[0], size: b[1] })),
+            asks: msg.asks.map(a => ({ price: a[0], size: a[1] }))
+          });
 
           case 'T': // Trade
           console.log('Processing trade:', msg);
