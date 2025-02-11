@@ -1,95 +1,56 @@
 // data-ingestion/tick-processor.js
 import Redis from 'ioredis';
+import { RollingWindowManager } from './rolling-window-manager.js';
 
 const redis = new Redis(process.env.REDIS_URL);
 
-// Polygon.io trade condition codes
-const BUY_CONDITIONS = new Set([
-  'B',  // Auto-executed bid
-  'F',  // Intermarket sweep bid
-  'T',  // Form T
-  'I',  // Odd lot bid
-  'G'   // Extended hours trade (buy)
-]);
-
-const SELL_CONDITIONS = new Set([
-  'S',  // Auto-executed ask
-  'H',  // Intermarket sweep ask
-  'E',  // Extended hours trade (sell)
-  'J',  // Odd lot ask
-  'K'   // Rule 155 trade (sell)
-]);
-
 export class TickProcessor {
-  
-    constructor(symbol, windowSize = 1000) {
-        this.symbol = symbol;
-        this.windowSize = windowSize;
-        this.redisKey = `ticks:${symbol}`;
-      }
+  constructor(symbol) {
+    this.symbol = symbol;
+    this.windowManager = new RollingWindowManager(`${symbol}:ticks`);
+    this.tickWindowSize = 1000; // Last 1000 ticks
+  }
+
+  async processTick(tick) {
+    // Use rolling window manager for tick storage
+    await this.windowManager.updateWindow(tick.timestamp, tick);
     
-      async processTick(tick) {
-        // Ensure unique timestamp for each tick
-        const enrichedTick = {
-          ...tick,
-          timestamp: Date.now() + Math.random(), // Add random for uniqueness
-          isBuy: this._isBuyTick(tick),
-          isSell: this._isSellTick(tick)
-        };
-    
-        await redis
-          .multi()
-          .zadd(this.redisKey, enrichedTick.timestamp, JSON.stringify(enrichedTick))
-          .zremrangebyrank(this.redisKey, 0, -this.windowSize - 1)
-          .exec();
-      }
-    
-      async getRecentTicks(count = 100) {
-        const ticks = await redis.zrevrange(
-          this.redisKey,
-          0,
-          count - 1,
-          'WITHSCORES'
-        );
-        
-        return ticks.map(t => {
-          try {
-            const data = JSON.parse(t[0]);
-            return {
-              ...data,
-              timestamp: parseFloat(t[1])
-            };
-          } catch (error) {
-            console.error('Failed to parse:', t[0]);
-            return null;
-          }
-        }).filter(t => t !== null);
-      }
-  
-    async getOrderFlowImbalance(windowSize = 100) {
-      const ticks = await this.getRecentTicks(windowSize);
-      
-      let buyVolume = 0;
-      let sellVolume = 0;
-      
-      ticks.forEach(t => {
-        if (this._isBuyTick(t)) buyVolume += t.size;
-        if (this._isSellTick(t)) sellVolume += t.size;
-      });
-  
-      const total = buyVolume + sellVolume;
-      return total > 0 ? (buyVolume - sellVolume) / total : 0;
-    }
-  
-    _isBuyTick(tick) {
-      return tick.conditions?.some(c => BUY_CONDITIONS.has(c));
-    }
-  
-    _isSellTick(tick) {
-      return tick.conditions?.some(c => SELL_CONDITIONS.has(c));
-    }
-  
-    async clear() {
-      await redis.del(this.redisKey);
+    // Trim using count-based window (different from time-based)
+    const currentCount = await this.windowManager.getCount();
+    if(currentCount > this.tickWindowSize) {
+      await this.windowManager.trimWindow(currentCount - this.tickWindowSize);
     }
   }
+
+  async getOrderFlowImbalance() {
+    const ticks = await this.windowManager.getWindow();
+    if(ticks.length === 0) return 0;
+    
+    const buyTicks = ticks.filter(t => this._isBuyTick(t)).length;
+    const sellTicks = ticks.length - buyTicks;
+    
+    return (buyTicks - sellTicks) / ticks.length;
+  }
+
+  _isBuyTick(tick) {
+    return tick.conditions?.includes('B') || tick.price > tick.vwap;
+  }
+
+  async getOrderFlowImbalance() {
+    const ticks = await redis.zrange(`ticks:${this.symbol}`, -100, -1);
+    const parsed = ticks.map(JSON.parse);
+    
+    const buyTicks = parsed.filter(t => t.size > 0).length;
+    const sellTicks = parsed.length - buyTicks;
+    
+    return (buyTicks - sellTicks) / parsed.length;
+  }
+}  
+// Add count-based trimming to RollingWindowManager
+RollingWindowManager.prototype.trimWindow = async function(count) {
+    await redis.zremrangebyrank(this.key, 0, count - 1);
+  };
+  
+  RollingWindowManager.prototype.getCount = async function() {
+    return redis.zcard(this.key);
+  }; 

@@ -6,24 +6,23 @@ const redis = new Redis(process.env.REDIS_URL);
 const WINDOW_SIZE = 60; // 60-minute window
 
 export class RollingWindowManager {
-  constructor(symbol) {
+  constructor(symbol, redisClient) {
     this.symbol = symbol;
+    this.redis = redisClient;
     this.key = `rollingWindow:${symbol}`;
   }
 
-  async updateWindow(timestamp, { open, high, low, close, volume, vwap }) {
-    const bar = {
-      timestamp: Math.floor(timestamp / 60000) * 60000, // Align to minute
-      open,
-      high,
-      low,
-      close,
-      volume,
-      vwap
+  async updateWindow(timestamp, data) {
+    const entry = {
+      timestamp: typeof timestamp === 'number' ? timestamp : Date.now(),
+      data
     };
     
-    // Update Redis sorted set (score = timestamp)
-    await redis.zadd(this.key, bar.timestamp, JSON.stringify(bar));
+    await redis.zadd(
+      this.key,
+      entry.timestamp,
+      JSON.stringify(entry)
+    );
     
     // Trim old data
     const cutoff = Date.now() - (WINDOW_SIZE * 60000);

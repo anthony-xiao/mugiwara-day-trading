@@ -3,6 +3,8 @@ import WebSocket from 'websocket';
 import Redis from 'ioredis';
 import dotenv from 'dotenv';
 import debug from 'debug';
+import { OrderBookManager } from './orderbook-manager.js'
+
 
 const log = debug('polygon:ws');
 dotenv.config();
@@ -46,15 +48,24 @@ const connectPolygon = () => {
             
           case 'Q': // Quote
           console.log('Processing quote:', msg);
-          const bookManager = new OrderBookManager(msg.sym);
-          await processQuote(msg);
-          await bookManager.updateBook({
-            bids: msg.bids.map(b => ({ price: b[0], size: b[1] })),
-            asks: msg.asks.map(a => ({ price: a[0], size: a[1] }))
+          const obm = new OrderBookManager(msg.sym);
+          await obm.updateOrderBook({
+            bids: msg.bids.slice(0, 5),
+            asks: msg.asks.slice(0, 5)
           });
+          await processQuote(msg);
 
           case 'T': // Trade
           console.log('Processing trade:', msg);
+          await redis.zadd(`ticks:${msg.sym}`, 
+            msg.t, 
+            JSON.stringify({
+              price: msg.p,
+              size: msg.s,
+              conditions: msg.c,
+              vwap: msg.vw
+            })
+          );
           await processTrade(msg);
 
             // Handle other message types if needed

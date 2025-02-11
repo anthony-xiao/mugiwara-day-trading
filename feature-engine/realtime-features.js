@@ -1,33 +1,33 @@
 // feature-engine/realtime-features.js
 import { ATR, RSI, SMA } from 'technicalindicators';
 import { RollingWindowManager } from '../data-ingestion/rolling-window-manager.js';
-import { TickProcessor } from '../data-ingestion/tick-processor.js';
-import { OrderBookManager } from '../data-ingestion/orderbook-manager.js';
-
 
 export class FeatureEngine {
-  constructor(symbol) {
+  constructor(symbol, redisClient) {
     this.symbol = symbol;
-    this.windowManager = new RollingWindowManager(symbol);
+    this.redis = redisClient;
+    this.windowManager = new RollingWindowManager(symbol, redisClient);
+    this.tickWindowSize = 100;
+    this.orderBookDepth = 5;
     this.atrPeriod = 5;
     this.rsiPeriod = 3;
     this.volumePeriod = 20;
-    this.tickProcessor = new TickProcessor(symbol);
-    this.tickWindowSize = 100; // Analyze last 100 ticks
-    this.orderBookManager = new OrderBookManager(symbol);
   }
 
   async calculateFeatures() {
     const window = await this.windowManager.getWindow();
     if (window.length < this.atrPeriod) return null;
 
+    const currentBar = await this.windowManager.getCurrentBar();
+
+
     return {
       atr5: this._calculateATR(window),
-      orderBookImbalance: this._calculateOrderImbalance(),
+      orderBookImbalance: await this._calculateOrderImbalance(),
       rsi3: this._calculateRSI(window),
-      vwapDeviation: this._calculateVWAPDeviation(window),
+      vwapDeviation: this._calculateVWAPDeviation(currentBar),
       volumeSpike: this._detectVolumeSpike(window),
-      orderFlowImbalance: this._calculateTickImbalance()
+      orderFlowImbalance: await this._calculateTickImbalance()
     };
   }
 
@@ -42,17 +42,20 @@ export class FeatureEngine {
   }
 
   async _calculateOrderImbalance() {
-    const [bestBid, bestAsk] = await Promise.all([
-      this.orderBookManager.getBestBid(),
-      this.orderBookManager.getBestAsk()
-    ]);
+    const orderBook = await this.redis.get(`orderbook:${this.symbol}`);
+    if (!orderBook) return 0;
+    
+    const { bids, asks } = JSON.parse(orderBook);
+    const bidDepth = this._calculateDepth(bids.slice(0, this.orderBookDepth));
+    const askDepth = this._calculateDepth(asks.slice(0, this.orderBookDepth));
+    
+    return (bidDepth - askDepth) / (bidDepth + askDepth || 1);
+  }
 
-    if (!bestBid || !bestAsk) return 0;
+  
 
-    // Calculate depth-weighted imbalance
-    const bidDepth = bestBid.size;
-    const askDepth = bestAsk.size;
-    return (bidDepth - askDepth) / (bidDepth + askDepth);
+  _calculateDepth(levels) {
+    return levels.reduce((acc, [price, size]) => acc + size, 0);
   }
 
   _calculateRSI(bars) {
@@ -85,28 +88,58 @@ export class FeatureEngine {
   }
 
   async _calculateTickImbalance() {
-    const ticks = await this.tickProcessor.getRecentTicks(this.tickWindowSize);
-    
-    let buyVolume = 0;
-    let sellVolume = 0;
-    ticks.forEach(t => {
-      if (this.tickProcessor._isBuyTick(t)) buyVolume += t.size;
-      if (this.tickProcessor._isSellTick(t)) sellVolume += t.size;
-    });
+    try {
+      const ticks = await this.redis.zrange(
+        `ticks:${this.symbol}`,
+        -this.tickWindowSize,
+        -1,
+        'WITHSCORES'
+      );
   
-    const total = buyVolume + sellVolume;
-    return total > 0 ? (buyVolume - sellVolume) / total : 0;
+      // Process tick/score pairs correctly
+      const parsedTicks = [];
+      for (let i = 0; i < ticks.length; i += 2) {
+        const tickStr = ticks[i];
+        const score = ticks[i + 1];
+        
+        try {
+          const tick = JSON.parse(tickStr);
+          parsedTicks.push(tick);
+          console.log(`Processed tick: ${tickStr}`);
+        } catch (e) {
+          console.error('Invalid tick:', { tickStr, score, error: e.message });
+        }
+      }
+  
+      console.log('Valid ticks count:', parsedTicks.length);
+      
+      if (parsedTicks.length === 0) return 0;
+  
+      const buyTicks = parsedTicks.filter(t => this._isBuyTick(t)).length;
+      const sellTicks = parsedTicks.length - buyTicks;
+      const imbalance = (buyTicks - sellTicks) / parsedTicks.length;
+      
+      console.log('Buy/Sell Breakdown:', { buyTicks, sellTicks, imbalance });
+      
+      return imbalance;
+    } catch (error) {
+      console.error('Tick imbalance error:', error);
+      return 0;
+    }
   }
   
-  async _reprocessCleanTicks() {
-    // Get full window and filter out corrections
-    const allTicks = await this.tickProcessor.getOrderFlow(this.windowSize);
-    return allTicks.filter(t => 
-      !TickProcessor._isCorrection(t)
-    ).slice(-this.orderFlowWindow);
+  _isBuyTick(tick) {
+    // Explicit check for VWAP comparison
+    const comparisonPrice = tick.vwap ?? tick.close;
+    return tick.conditions?.includes('B') || tick.price > comparisonPrice;
+  }
+
+  _isBuyTick(tick) {
+    // Handle Polygon.io specific conditions
+    return tick.conditions?.includes('B') || 
+    (tick.price > (tick.vwap || tick.close));
   }
 }
-
 
 function standardDeviation(values) {
   const avg = values.reduce((a,b) => a + b, 0) / values.length;
