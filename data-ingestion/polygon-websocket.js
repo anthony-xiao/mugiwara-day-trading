@@ -1,4 +1,4 @@
-// data-ingestion/polygon-websocket.mjs
+// data-ingestion/polygon-websocket.js
 import WebSocket from 'websocket';
 import Redis from 'ioredis';
 import dotenv from 'dotenv';
@@ -17,7 +17,7 @@ const connectPolygon = () => {
   ws.onopen = () => {
     console.log('✅ WebSocket Connected');
     ws.send(JSON.stringify({"action":"auth","params":process.env.POLYGON_API_KEY}));
-    ws.send(JSON.stringify({"action":"subscribe","params":"T.*,Q.*,A.*"}));
+    ws.send(JSON.stringify({"action":"subscribe","params":"T.AAPL,Q.AAPL,A.AAPL"}));
     
   };
 

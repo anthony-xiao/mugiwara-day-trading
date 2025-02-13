@@ -50,4 +50,13 @@ export class OrderBookManager {
   async getOrderBook() {
     return JSON.parse(await redis.get(this.key));
   }
+
+  async getBestBid() {
+    return this.redis.hget(`orderbook:${this.symbol}`, 'bestBid');
+  }
+
+  async getBestAsk() {
+    return this.redis.hget(`orderbook:${this.symbol}`, 'bestAsk');
+  }
+  
 }
