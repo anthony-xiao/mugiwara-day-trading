@@ -6,6 +6,11 @@ const ORDERBOOK_TTL = 30; // Seconds to keep snapshot
 
 export class OrderBookManager {
   constructor(symbol, redisClient) {
+    console.log(symbol)
+    console.log(redisClient)
+    if (!symbol) throw new Error('Symbol is required');
+    if (!redisClient) throw new Error('Redis client is required');
+    
     this.symbol = symbol;
     this.redis = redisClient;
     this.key = `orderbook:${symbol}`;
@@ -14,6 +19,13 @@ export class OrderBookManager {
       bids: [],
       asks: []
     };
+    // Add error handlers
+    this.redis.on('error', err => 
+      console.error(`Redis error (${symbol}):`, err)
+    );
+    this.redis.on('connect', () => 
+      console.log(`Redis connected for ${symbol}`)
+    );
   }
 
   async updateOrderBook(update) {
@@ -24,7 +36,7 @@ export class OrderBookManager {
       // Trim to max levels and store
       this.orderBook.bids = this.orderBook.bids.slice(0, this.maxLevels);
       this.orderBook.asks = this.orderBook.asks.slice(0, this.maxLevels);
-      
+
     await redis.set(
       this.key,
       JSON.stringify(this.orderBook),
@@ -51,12 +63,27 @@ export class OrderBookManager {
     return JSON.parse(await redis.get(this.key));
   }
 
+  async _verifyConnection() {
+    if (!this.redis || this.redis.status !== 'ready') {
+      await this.redis.connect();
+    }
+    return this.redis.ping();
+  }
+
   async getBestBid() {
-    return this.redis.hget(`orderbook:${this.symbol}`, 'bestBid');
+    await this._verifyConnection();
+    const value = await this.redis.hget(`orderbook:${this.symbol}`, 'bestBid');
+    return parseFloat(value) || 0;
   }
 
   async getBestAsk() {
-    return this.redis.hget(`orderbook:${this.symbol}`, 'bestAsk');
+    await this._verifyConnection();
+    const value = await this.redis.hget(`orderbook:${this.symbol}`, 'bestAsk');
+    return parseFloat(value) || 0;
   }
   
+  async getFullBook() {
+    return this.redis.hgetall(this.orderBookKey);
+  }
+
 }

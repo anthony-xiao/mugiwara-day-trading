@@ -1,5 +1,5 @@
 // execution/smart-router.js
-import Alpaca from '@alpacahq/alpaca-trade-api';
+import { executeOrder } from './alpaca-router.js';
 import { OrderBookManager } from '../data-ingestion/orderbook-manager.js';
 import { Redis } from 'ioredis';
 import axios from 'axios';
@@ -9,19 +9,14 @@ const POLYGON_API = process.env.POLYGON_API_KEY;
 
 export class SmartRouter {
   constructor() {
-    this.alpaca = new Alpaca({
-      keyId: process.env.ALPACA_KEY,
-      secretKey: process.env.ALPACA_SECRET,
-      paper: true
-    });
-    // Initialize with default values
+    this.redis = redis;
     this.marketStatus = { 
-        market: 'stocks',
-        status: 'unknown',
-        nextHours: 'regular',
-        changeAt: new Date()
-        };
-    this.lastCheck = Date.now();
+      market: 'stocks',
+      status: 'unknown',
+      nextHours: 'regular',
+      changeAt: new Date()
+    };
+    this.lastCheck = 0;
   }
 
   async executeSignal(signal) {
@@ -35,37 +30,40 @@ export class SmartRouter {
     });
 
     const orderParams = this._buildOrder(signal, marketData);
-    return this.alpaca.placeOrder(orderParams);
+    console.log(orderParams)
+    return executeOrder(orderParams); // Use existing alpaca-router.js
   }
 
   async _checkMarketStatus() {
     try {
-      // Remove cache check to force refresh first time
-      if(this.lastCheck !== 0 && Date.now() - this.lastCheck < 300000) return;
-      
       const { data } = await axios.get(
         'https://api.polygon.io/v1/marketstatus/now',
         { params: { apiKey: POLYGON_API } }
       );
       
-      // Add fallback structure
       this.marketStatus = {
         market: data.market || 'stocks',
-        status: data.status || 'unknown',
-        nextHours: data.nextHours || 'regular',
-        changeAt: data.changeAt ? new Date(data.changeAt) : new Date()
+        status: this._normalizeStatus(data.market),
+        nextHours: data.exchanges?.nyse || 'regular',
+        changeAt: new Date(data.serverTime)
       };
       
-      this.lastCheck = Date.now();
     } catch (error) {
-      console.error('⚠️ Failed to get market status:', error.message);
-      // Maintain safe defaults
-      this.marketStatus = { 
-        ...this.marketStatus,
-        status: 'unknown'
-      };
+      console.error('Market status check failed:', error);
+      this.marketStatus.status = 'unknown';
     }
   }
+
+  _normalizeStatus(status) {
+  const statusMap = {
+    'open': 'open',
+    'closed': 'closed',
+    'extended-hours': 'open',  // Treat extended hours as open
+    'pre-market': 'closed',
+    'after-hours': 'closed'
+  };
+  return statusMap[status?.toLowerCase()] || 'unknown';
+}
 
   async _getMarketData(symbol) {
     // Handle initial null state
@@ -81,7 +79,7 @@ export class SmartRouter {
   }
 
   async _getRealtimeData(symbol) {
-    const obm = new OrderBookManager(symbol);
+    const obm = new OrderBookManager(symbol, this.redis);
     return {
       source: 'realtime',
       timestamp: Date.now(),
@@ -144,16 +142,16 @@ export class SmartRouter {
     });
 
     return {
-      symbol: signal.symbol,
-      qty: signal.size,
-      side: signal.direction,
-      type: 'limit',
-      limit_price: price,
-      time_in_force: 'ioc',
-      order_class: 'bracket',
-      stop_loss: {
-        stop_price: signal.stopPrice,
-        limit_price: signal.stopPrice * 0.995
+        symbol: signal.symbol,
+        quantity: signal.size.toString(), // Convert to string for Alpaca v3
+        direction: signal.direction,
+        type: 'limit',
+        limit_price: price,
+        time_in_force: 'ioc',
+        order_class: 'bracket',
+        stop_loss: {
+            stop_price: signal.stopPrice.toString(),
+            limit_price: (signal.stopPrice * 0.995).toString()
       }
     };
   }

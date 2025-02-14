@@ -5,7 +5,7 @@ async function testOrder() {
   const testSignal = {
     symbol: 'TSLA',
     direction: 'buy',
-    price: '150.25', // Must be string
+    limit_price: '150.25', // Must be string
     quantity: '10' // Must be string
   };
 

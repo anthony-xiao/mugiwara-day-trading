@@ -50,7 +50,7 @@ async function testOrderExecution() {
         symbol: 'TSLA',
         quantity: 10 ,
         direction: 'buy',
-        price: 150.25
+        limit_price: 150.25
   };
 
   try {

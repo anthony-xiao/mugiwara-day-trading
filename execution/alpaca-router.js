@@ -14,7 +14,7 @@ export async function executeOrder(signal) {
       qty: signal.quantity.toString(), // Must be string in v3
       side: signal.direction,
       type: 'limit',
-      limit_price: signal.price.toString(), // Must be string
+      limit_price: signal.limit_price.toString(), // Must be string
       time_in_force: 'day',
       client_order_id: `HFT_${Date.now()}`,
       atr: signal.atr
@@ -22,7 +22,6 @@ export async function executeOrder(signal) {
 
     // Validate using trading engine's method
     if(!tradingEngine.validateOrder(order)) {
-      console.log(order)
       throw new Error('Order validation failed');
     }
 
