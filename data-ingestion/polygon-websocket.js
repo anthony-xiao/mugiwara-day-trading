@@ -51,19 +51,15 @@ const connectPolygon = () => {
           await processQuote(msg);
           try {
             const obm = new OrderBookManager(msg.sym, redis);
-            
-            // Polygon's quote format uses bp/bq for best bid, ap/aq for best ask
-            const bids = [[msg.bp, msg.bs]]; // [price, size]
-            const asks = [[msg.ap, msg.as]];
-            
-            await obm.updateOrderBook({
-              bids: bids,
-              asks: asks,
-              timestamp: msg.t
-            });
+            await obm.updateOrderBook(msg); // Pass the entire quote message
+          
             // Verify update
+            console.log(`📊 Updated order book for ${msg.sym}:`, {
+              bid: msg.bp,
+              ask: msg.ap,
+              timestamp: new Date(msg.t).toISOString()
+            });
             const bestBid = await obm.getBestBid();
-            console.log('bestbbbid', bestBid)
             console.log(`Updated ${msg.sym} order book. Best bid:`, bestBid);
           } catch (err) {
             console.error('Error processing quote:', err);

@@ -28,21 +28,25 @@ export class OrderBookManager {
     );
   }
 
-  async updateOrderBook(update) {
-      // Merge updates with existing order book
-      this.orderBook.bids = this._mergeLevels([...this.orderBook.bids, ...update.bids], 'desc');
-      this.orderBook.asks = this._mergeLevels([...this.orderBook.asks, ...update.asks], 'asc');
-      
-      // Trim to max levels and store
-      this.orderBook.bids = this.orderBook.bids.slice(0, this.maxLevels);
-      this.orderBook.asks = this.orderBook.asks.slice(0, this.maxLevels);
+  async updateOrderBook(quote) {
+    // Polygon's quote format uses bp/bq for best bid, ap/aq for best ask
+    const bidPrice = quote.bp || 0;
+    const bidSize = quote.bs || 0;
+    const askPrice = quote.ap || 0;
+    const askSize = quote.as || 0;
+    const timestamp = quote.t || Date.now();
 
-    await redis.set(
-      this.key,
-      JSON.stringify(this.orderBook),
-      'EX',
-      ORDERBOOK_TTL
-    );
+    // Store best bid/ask in Redis Hash
+    await redis.hset(this.key, {
+      bestBid: bidPrice,
+      bestBidSize: bidSize,
+      bestAsk: askPrice,
+      bestAskSize: askSize,
+      timestamp
+    });
+    
+    // Set TTL to auto-expire stale data
+    await redis.expire(this.orderBookKey, 60); // 60 seconds
   }
 
   _mergeLevels(levels, sortDirection) {
@@ -69,21 +73,16 @@ export class OrderBookManager {
     }
     return this.redis.ping();
   }
-
   async getBestBid() {
-    await this._verifyConnection();
-    const value = await this.redis.hget(`orderbook:${this.symbol}`, 'bestBid');
-    return parseFloat(value) || 0;
+    return parseFloat(await redis.hget(this.key, 'bestBid'));
   }
 
   async getBestAsk() {
-    await this._verifyConnection();
-    const value = await this.redis.hget(`orderbook:${this.symbol}`, 'bestAsk');
-    return parseFloat(value) || 0;
+    return parseFloat(await redis.hget(this.key, 'bestAsk'));
   }
-  
-  async getFullBook() {
-    return this.redis.hgetall(this.orderBookKey);
+
+  async getOrderBook() {
+    return redis.hgetall(this.key);
   }
 
 }

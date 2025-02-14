@@ -150,8 +150,8 @@ export class SmartRouter {
         time_in_force: 'ioc',
         order_class: 'bracket',
         stop_loss: {
-            stop_price: signal.stopPrice.toString(),
-            limit_price: (signal.stopPrice * 0.995).toString()
+            stop_price: signal.stopPrice,
+            limit_price: signal.stopPrice * 0.995
       }
     };
   }
