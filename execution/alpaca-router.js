@@ -7,7 +7,6 @@ export const tradingEngine = new TradingEngine();
 
 // Modified executeOrder function
 export async function executeOrder(signal) {
-  // console.log('websocket signal',signal)
   try {
     // Create order object using trading engine
     const order = tradingEngine.createOrderObject({

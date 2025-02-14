@@ -30,7 +30,6 @@ export class SmartRouter {
     });
 
     const orderParams = this._buildOrder(signal, marketData);
-    console.log(orderParams)
     return executeOrder(orderParams); // Use existing alpaca-router.js
   }
 
@@ -141,17 +140,22 @@ export class SmartRouter {
       marketStatus: this.marketStatus.status
     });
 
+    // Validate order parameters
+    if (!Number.isInteger(signal.size)) {
+      throw new Error(`Invalid order size: ${signal.size}`);
+    }
+
     return {
         symbol: signal.symbol,
         quantity: signal.size.toString(), // Convert to string for Alpaca v3
         direction: signal.direction,
         type: 'limit',
-        limit_price: price,
+        limit_price: price.toFixed(2),
         time_in_force: 'ioc',
         order_class: 'bracket',
         stop_loss: {
-            stop_price: signal.stopPrice,
-            limit_price: signal.stopPrice * 0.995
+          stop_price: signal.stopPrice.toFixed(2),
+          limit_price: (signal.stopPrice * 0.995).toFixed(2)
       }
     };
   }

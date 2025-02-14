@@ -40,10 +40,13 @@ export class TradingEngine {
       return null;
     }
 
+    
     try {
       const order = await this.alpaca.createOrder(orderDetails);
       this.trackOrder(order);
       logger.info(`Order placed: ${order.id}`, order);
+      console.log('✅ Order executed successfully:', order.id);
+      await redis.xadd('order:logs', '*', 'order', JSON.stringify(order));
       return order;
     } catch (error) {
       this.handleOrderError(error, orderDetails);
