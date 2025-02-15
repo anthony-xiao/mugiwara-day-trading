@@ -110,6 +110,9 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 .python-version
+.keras
+.h5
+tf_env/
 
 # IDE specific
 .vscode/
@@ -154,3 +157,32 @@ bower_components/
 
 # macOS
 .DS_Store
+
+# Virtual Environment
+tf_env/
+venv/
+.env/
+.env*/
+*.env
+
+# Python Cache Files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE Files
+.vscode/
+.idea/
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# Logs and Databases
+*.log
+*.sqlite3
+
+# Local Development Files
+*.local
+*.swp
+*.swo
