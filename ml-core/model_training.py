@@ -53,6 +53,6 @@ if __name__ == "__main__":
     model.fit(X, [y_dir, y_vol, y_pos], epochs=2, batch_size=32)
     
     # Save model
-    model.save('hybrid_model.keras')  # New format
+    model.save('hybrid_model.h5')  # HDF5 format
     model.save_weights('hybrid_model.weights.h5')  # Backup weights
     print("Model saved successfully")
