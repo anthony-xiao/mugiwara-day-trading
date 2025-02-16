@@ -1,22 +1,24 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.layers import Input, LSTM, Dense, LayerNormalization, MultiHeadAttention, Lambda
+from tensorflow.keras.layers import Input, LSTM, Dense, LayerNormalization, Conv1D, GlobalMaxPooling1D
 from tensorflow.keras.models import Model
 from tensorflow.keras.optimizers import Adam
 
-def create_hybrid_model(input_shape, num_heads=4, lstm_units=64, dense_units=32):
+def create_hybrid_model(input_shape, lstm_units=64, conv_filters=32, dense_units=32):
     inputs = Input(shape=input_shape)
     
     # LSTM Temporal Processing
     x = LSTM(lstm_units, return_sequences=True)(inputs)
     x = LayerNormalization()(x)
     
-    # Transformer Encoder
-    attn = MultiHeadAttention(num_heads=num_heads, key_dim=lstm_units)(x, x)
-    x = LayerNormalization()(attn + x)  # Residual connection
+    # Temporal Convolution Block (Replaces Transformer)
+    x = Conv1D(filters=conv_filters, kernel_size=3, padding='same', activation='relu')(x)
+    x = LayerNormalization()(x)
+    x = Conv1D(filters=conv_filters, kernel_size=3, padding='same', activation='relu')(x)
+    x = LayerNormalization()(x)
     
-    # Temporal Pooling with Lambda layer
-    x = Lambda(lambda t: tf.reduce_mean(t, axis=1))(x)
+    # Global Pooling
+    x = GlobalMaxPooling1D()(x)
     
     # Intermediate dense processing
     x = Dense(dense_units, activation='relu')(x)
@@ -53,6 +55,6 @@ if __name__ == "__main__":
     model.fit(X, [y_dir, y_vol, y_pos], epochs=2, batch_size=32)
     
     # Save model
-    model.save('hybrid_model.h5')  # HDF5 format
+    model.save('hybrid_model.h5')
     model.save_weights('hybrid_model.weights.h5')  # Backup weights
     print("Model saved successfully")
