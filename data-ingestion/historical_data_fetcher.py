@@ -437,6 +437,7 @@ def fetch_all_data(ticker: str, start_date: str, end_date: str) -> Dict[str, str
     return results
 
 if __name__ == "__main__":
+    from corporate_actions import CorporateActionsManager
     import argparse
     
     parser = argparse.ArgumentParser(description="Fetch Polygon.io historical data")
@@ -446,7 +447,8 @@ if __name__ == "__main__":
     parser.add_argument("--start", help="Start date YYYY-MM-DD")
     parser.add_argument("--end", default=datetime.now().strftime("%Y-%m-%d"))
     parser.add_argument("--threads", type=int, default=MAX_THREADS)
-    
+
+
     args = parser.parse_args()
     
     if args.init_only:
@@ -471,6 +473,9 @@ if __name__ == "__main__":
 
     with ThreadPool(min(args.threads, len(args.tickers))) as pool:
         results = pool.map(process_ticker, args.tickers)
+
+    ca_manager = CorporateActionsManager()
+    ca_manager.fetch_corporate_actions(args.tickers, args.start, args.end)
     
     success_count = sum(1 for r in results if r)
     logging.info(f"Completed with {success_count}/{len(args.tickers)} successful tickers")

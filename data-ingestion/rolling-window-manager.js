@@ -1,6 +1,9 @@
 // data-ingestion/rolling-window-manager.js
 import Redis from 'ioredis';
 // import { technicalIndicators } from 'technicalindicators';
+import { python } from 'python-bridge';
+
+const py = python();
 
 const redis = new Redis(process.env.REDIS_URL);
 const WINDOW_SIZE = 60; // 60-minute window
@@ -10,6 +13,11 @@ export class RollingWindowManager {
     this.symbol = symbol;
     this.redis = redisClient;
     this.key = `rollingWindow:${symbol}`;
+    // Initialize Python corporate actions once
+    py.ex`
+      from corporate_actions import corporate_actions_manager
+      ca_manager = corporate_actions_manager
+    `;
   }
 
   async updateWindow(timestamp, data) {
@@ -18,6 +26,9 @@ export class RollingWindowManager {
       data
     };
     
+      // Apply corporate actions
+      this.window = await this._applyCorporateActions();
+
     await redis.zadd(
       this.key,
       entry.timestamp,
@@ -38,4 +49,14 @@ export class RollingWindowManager {
     const window = await this.getWindow();
     return window[window.length - 1];
   }
+
+  async _applyCorporateActions() {
+    return py`
+      ca_manager.apply_adjustments(
+        ${this.window.to_df()},  # Assume DataFrame-like structure
+        ${this.symbol}
+      ).to_dict('records')
+    `;
+  }
+  
 }

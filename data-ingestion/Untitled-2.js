@@ -56,10 +56,6 @@ class PolygonClient {
     ws.onopen = () => {
       console.log('✅ WebSocket Connected');
       ws.send(JSON.stringify({"action":"auth","params":process.env.POLYGON_API_KEY}));
-       // Delay initial subscription after auth
-      setTimeout(() => {
-        client.subscribe(this.initialSymbols);
-      }, 500); // Allow auth to complete
     };
 
     // ... rest of the socket handlers (onclose, onerror, onmessage) ...
@@ -79,7 +75,7 @@ class PolygonClient {
           console.log('Processing message type:', msg.ev);
           
           // Store raw data in Redis stream
-          await this.redis.xadd('market-data:raw', '*', 'msg', JSON.stringify(msg));
+          await redis.xadd('market-data:raw', '*', 'msg', JSON.stringify(msg));
   
           // Handle different message types
           switch (msg.ev) {
@@ -199,6 +195,15 @@ async function processTrade(trade) {
   await redis.xadd(`trades:${trade.sym}`, '*', 'trade', JSON.stringify(trade));
   console.log(`Stored trade for ${trade.sym}`);
 }
+
+const flushOnExit = async () => {
+  await tickStore.flush();
+  process.exit();
+};
+
+process.on('SIGINT', flushOnExit);
+process.on('SIGTERM', flushOnExit);
+process.on('beforeExit', () => tickStore.flush());
 
 // Export singleton instance but don't auto-connect
 export const client = new PolygonClient();
