@@ -1,0 +1,2 @@
+Websocket and tick tests
+News filter, news-sentiment, sentiment_model, all paused due to needing to pay for news apis 

@@ -26,6 +26,7 @@ Polygon.io Historical Data Fetcher
 """
 
 import os
+from dotenv import load_dotenv
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 import requests
 import pandas as pd
@@ -37,6 +38,7 @@ import logging
 from typing import Dict, List, Optional, Tuple
 
 # Configure logging
+load_dotenv()
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -44,7 +46,7 @@ logging.basicConfig(
 )
 
 # Constants
-POLYGON_API_KEY = os.getenv('POLYGON_KEY')
+POLYGON_API_KEY = os.getenv('POLYGON_API_KEY')
 BASE_URL = "https://api.polygon.io"
 MAX_THREADS = 8
 TRADING_DAYS = set()  # Populated during initialization

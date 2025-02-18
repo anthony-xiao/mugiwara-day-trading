@@ -4,5 +4,5 @@ export default {
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
   },
-  setupFilesAfterEnv: ['./jest.setup.js']
+  setupFilesAfterEnv: ['./jest.setup.js','jest-websocket-mock']
 };
